@@ -1,7 +1,9 @@
 #include "SingleStorage.h"
 #include <filesystem>
 #include <iostream>
-#include <fstream>
+#include <sstream>
+#include <ctime>
+#include <iomanip>
 
 namespace fs = std::filesystem;
 
@@ -10,34 +12,52 @@ void SingleStorage::Save(const RestorePoint& point) {
 
     if (!fs::exists(backupFolder)) {
         fs::create_directory(backupFolder);
-        std::cout << "Создана бэкап папка: " << backupFolder << std::endl;
+        std::cout << "Created backup folder: " << backupFolder << std::endl;
     }
 
-    const std::string singleBackupDir = backupFolder + "/SingleBackup";
+    const std::string zipPath = backupFolder + "/SingleBackup.zip";
 
-    if (!fs::exists(singleBackupDir)) {
-        if (!fs::create_directory(singleBackupDir)) {
-            std::cerr << "Ошибка создания директории: " << singleBackupDir << std::endl;
-            return;
-        }
-        std::cout << "Созданная директория: " << singleBackupDir << std::endl;
-    }
+    std::stringstream zipCommand;
+    bool firstFile = true;
 
     for (const auto& obj : point.GetObjects()) {
-        std::string filePath = singleBackupDir + "/" + fs::path(obj.GetPath()).filename().string();
+        std::string sourcePath = obj.GetPath();
 
-        try {
-            std::ofstream outFile(filePath, std::ios::binary);
-            if (!outFile) {
-                std::cerr << "Ошибка создания файла: " << filePath << std::endl;
-                continue;
-            }
+        if (!fs::exists(sourcePath)) {
+            std::cerr << "Source file does not exist: " << sourcePath << std::endl;
+            continue;
+        }
 
-            outFile << "Файл " << obj.GetPath() << " создан";
-            std::cout << "Созданный файл: " << filePath << std::endl;
+#ifdef _WIN32
+        if (firstFile) {
+            zipCommand << "powershell Compress-Archive -Path \"" << sourcePath
+                << "\" -DestinationPath \"" << zipPath << "\"";
+            firstFile = false;
         }
-        catch (const std::exception& e) {
-            std::cerr << "Ошибка записи файла " << obj.GetPath() << ": " << e.what() << std::endl;
+        else {
+            zipCommand << " ; powershell Compress-Archive -Path \"" << sourcePath
+                << "\" -Update -DestinationPath \"" << zipPath << "\"";
         }
+#else
+        if (firstFile) {
+            zipCommand << "zip -j \"" << zipPath << "\" \"" << sourcePath << "\"";
+            firstFile = false;
+        }
+        else {
+            zipCommand << " && zip -j -u \"" << zipPath << "\" \"" << sourcePath << "\"";
+        }
+#endif
     }
+
+    int result = std::system(zipCommand.str().c_str());
+    if (result != 0) {
+        std::cerr << "Error creating/updating zip archive" << std::endl;
+        return;
+    }
+
+    time_t now = time(nullptr);
+    std::tm localTime;
+    localtime_s(&localTime, &now);
+    std::cout << "Backup created in: " << zipPath << " at "
+        << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S") << std::endl;
 }

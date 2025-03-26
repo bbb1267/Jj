@@ -1,7 +1,9 @@
 #include "SplitStorage.h"
 #include <filesystem>
 #include <iostream>
-#include <fstream>
+#include <sstream>
+#include <ctime>
+#include <iomanip>
 
 namespace fs = std::filesystem;
 
@@ -10,35 +12,39 @@ void SplitStorage::Save(const RestorePoint& point) {
 
     if (!fs::exists(backupFolder)) {
         fs::create_directory(backupFolder);
-        std::cout << "Создана бэкап папка: " << backupFolder << std::endl;
+        std::cout << "Created backup folder: " << backupFolder << std::endl;
     }
 
     for (const auto& obj : point.GetObjects()) {
-        std::ostringstream dirPath;
-        dirPath << backupFolder << "/" << fs::path(obj.GetPath()).stem().string();
+        std::string sourcePath = obj.GetPath();
 
-        if (!fs::exists(dirPath.str())) {
-            if (!fs::create_directory(dirPath.str())) {
-                std::cerr << "Ошибка создания директории: " << dirPath.str() << std::endl;
-                continue;
-            }
-            std::cout << "Созданная директория: " << dirPath.str() << std::endl;
+        if (!fs::exists(sourcePath)) {
+            std::cerr << "Source file does not exist: " << sourcePath << std::endl;
+            continue;
         }
 
-        std::string filePath = dirPath.str() + "/" + fs::path(obj.GetPath()).filename().string();
+        std::string zipName = fs::path(obj.GetPath()).stem().string() + ".zip";
+        std::string zipPath = backupFolder + "/" + zipName;
 
-        try {
-            std::ofstream outFile(filePath, std::ios::binary);
-            if (!outFile) {
-                std::cerr << "Ошибка создания файла: " << filePath << std::endl;
-                continue;
-            }
+        std::stringstream zipCommand;
 
-            outFile << "Файл " << obj.GetPath() << " создан";
-            std::cout << "Созданный файл: " << filePath << std::endl;
+#ifdef _WIN32
+        zipCommand << "powershell Compress-Archive -Path \"" << sourcePath
+            << "\" -DestinationPath \"" << zipPath << "\"";
+#else
+        zipCommand << "zip -j \"" << zipPath << "\" \"" << sourcePath << "\"";
+#endif
+
+        int result = std::system(zipCommand.str().c_str());
+        if (result != 0) {
+            std::cerr << "Error creating zip archive for file: " << sourcePath << std::endl;
+            continue;
         }
-        catch (const std::exception& e) {
-            std::cerr << "Ошибка записи файла " << obj.GetPath() << ": " << e.what() << std::endl;
-        }
+
+        time_t now = time(nullptr);
+        std::tm localTime;
+        localtime_s(&localTime, &now);
+        std::cout << "File archived: " << zipPath << " at "
+            << std::put_time(&localTime, "%Y-%m-%d %H:%M:%S") << std::endl;
     }
 }
